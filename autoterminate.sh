@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# autoterminate.sh — PostToolUse hook. Starts a kill timer after a rent and
+# cancels it after a manual terminate. The API key is read from the timer's
+# environment, never placed on a command line.
+set -uo pipefail
+
+MAX_MINUTES="${HYPERBOLIC_MAX_MINUTES:-30}"
+MAX_RATE_USD="${HYPERBOLIC_MAX_RATE_USD:-5.00}"
+LEDGER="${HYPERBOLIC_LEDGER:-$HOME/hyperbolic-guardrails/ledger.jsonl}"
+BASE="https://api.hyperbolic.xyz/v2/on-demand/virtual-machine-rentals"
+
+input=$(cat)
+tool=$(jq -r '.tool_name' <<<"$input")
+resp=$(jq -r '.tool_response
+  | if type=="array" then .[0].text
+    elif (.content? // null) != null then .content[0].text
+    else (.text // tostring) end' <<<"$input")
+
+case "$tool" in
+  mcp__hyperbolic-gpu__rent-gpu-instance)
+    # Prefer the id in the tool response. If the call was backgrounded or
+    # timed out, fall back to the newest live rental on the account.
+    id=$(grep -oE 'rental_id\\?"?\s*:\s*[0-9]+' <<<"$resp" | head -1 | grep -oE '[0-9]+$' || true)
+    if [[ -z "$id" ]]; then
+      id=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "$BASE" \
+        | jq -r '[.[] | select(.status=="Pending" or .status=="Running")] | max_by(.id) | .id // empty')
+      [[ -n "$id" ]] && echo "rental id not in response, using newest live rental $id" >&2
+    fi
+    # Loud failure: exit 2 makes Claude Code show this to the model and the user.
+    [[ -n "$id" ]] || { echo "AUTO-TERMINATE NOT ARMED: no rental id in response and no live rental found. Check list-user-instances and terminate by hand." >&2; exit 2; }
+    gpus=$(jq -r '.tool_input.gpu_count // 1' <<<"$input")
+    est=$(awk -v r="$MAX_RATE_USD" -v g="$gpus" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", r*g*m/60}')
+
+    # The timer reads HYPERBOLIC_API_TOKEN from its own environment ($1..$4 are not secrets).
+    export HYPERBOLIC_API_TOKEN
+    nohup bash -c '
+      sleep "$1"
+      curl -s -X POST -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" -H "Content-Type: application/json" \
+           -d "{\"rentalId\":$2,\"reason\":\"auto-terminate\"}" "$3/terminate" >> "$4" 2>&1
+      echo "$(date -u +%FT%TZ) auto-terminated $2" >> "$4"
+    ' _ "$((MAX_MINUTES*60))" "$id" "$BASE" "$LEDGER.log" >/dev/null 2>&1 &
+    pid=$!
+
+    jq -cn --arg id "$id" --arg pid "$pid" --arg est "$est" --arg t "$(date -u +%FT%TZ)" \
+      '{rental_id:($id|tonumber), timer_pid:($pid|tonumber), est_usd:($est|tonumber), rented_at:$t}' >> "$LEDGER"
+    echo "auto-terminate armed: $id in ${MAX_MINUTES} min (timer pid $pid)" >&2
+    ;;
+
+  mcp__hyperbolic-gpu__terminate-gpu-instance)
+    id=$(jq -r '.tool_input.rental_id' <<<"$input")
+    pid=$(jq -r --arg id "$id" 'select((.rental_id|tostring)==$id) | .timer_pid' "$LEDGER" 2>/dev/null | tail -1)
+    # Only kill it if that PID is still our timer for this rental, not a reused PID.
+    if [[ "$pid" =~ ^[0-9]+$ ]] && ps -o command= -p "$pid" 2>/dev/null | grep -q -- "auto-terminate.* $id "; then
+      kill "$pid" 2>/dev/null && echo "timer $pid cancelled for $id" >&2
+    fi
+    ;;
+esac
+exit 0

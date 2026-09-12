@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__hyperbolic-gpu__list-available-gpus",
+      "mcp__hyperbolic-gpu__get-gpu-option-details",
+      "mcp__hyperbolic-gpu__get-account-balance",
+      "mcp__hyperbolic-gpu__list-user-instances",
+      "mcp__hyperbolic-gpu__ssh-status"
+    ],
+    "ask": [
+      "mcp__hyperbolic-gpu__rent-gpu-instance",
+      "mcp__hyperbolic-gpu__terminate-gpu-instance"
+    ],
+    "deny": [
+      "Bash(curl *hyperbolic*)",
+      "Bash(wget *hyperbolic*)",
+      "WebFetch(domain:api.hyperbolic.xyz)",
+      "WebFetch(domain:api.hyperbolic.ai)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__hyperbolic-gpu__rent-gpu-instance",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/hyperbolic-guardrails/guard.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__hyperbolic-gpu__(rent|terminate)-gpu-instance",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/hyperbolic-guardrails/autoterminate.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
