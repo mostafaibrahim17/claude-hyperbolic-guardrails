@@ -7,7 +7,6 @@ set -uo pipefail
 MAX_MINUTES="${HYPERBOLIC_MAX_MINUTES:-30}"
 LEDGER="${HYPERBOLIC_LEDGER:-$HOME/hyperbolic-guardrails/ledger.jsonl}"
 BASE="https://api.hyperbolic.xyz/v2/on-demand/virtual-machine-rentals"
-[[ -n "${HYPERBOLIC_API_TOKEN:-}" ]] || { echo "AUTO-TERMINATE NOT ARMED: HYPERBOLIC_API_TOKEN is not set" >&2; exit 2; }
 [[ "$MAX_MINUTES" =~ ^[0-9]+$ ]] || { echo "AUTO-TERMINATE NOT ARMED: HYPERBOLIC_MAX_MINUTES must be an integer" >&2; exit 2; }
 
 input=$(cat)
@@ -19,9 +18,13 @@ resp=$(jq -r '.tool_response
 
 case "$tool" in
   mcp__hyperbolic-gpu__rent-gpu-instance)
+    [[ -n "${HYPERBOLIC_API_TOKEN:-}" ]] || { echo "AUTO-TERMINATE NOT ARMED: HYPERBOLIC_API_TOKEN is not set" >&2; exit 2; }
     # Prefer the id in the tool response. If the call was backgrounded or
     # timed out, fall back to the newest live rental on the account.
     id=$(grep -oE 'rental_id\\?"?\s*:\s*[0-9]+' <<<"$resp" | head -1 | grep -oE '[0-9]+$' || true)
+    if [[ -z "$id" ]] && grep -qiE '"status": *"error"|^Error|hook error|not found' <<<"$resp"; then
+      echo "rent call failed, no timer needed" >&2; exit 0
+    fi
     if [[ -z "$id" ]]; then
       id=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "$BASE" \
         | jq -r '[.[] | select(.status=="Pending" or .status=="Running")] | max_by(.id) | .id // empty')
@@ -29,10 +32,11 @@ case "$tool" in
     fi
     # Loud failure: exit 2 makes Claude Code show this to the model and the user.
     [[ -n "$id" ]] || { echo "AUTO-TERMINATE NOT ARMED: no rental id in response and no live rental found. Check list-user-instances and terminate by hand." >&2; exit 2; }
-    # Estimated cost for the ledger: real hourly price of this rental, from the API.
-    cents=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "$BASE" \
-      | jq -r --argjson id "$id" '.[] | select(.id==$id) | .currentTerm.costPerHourCents // empty')
-    [[ "$cents" =~ ^[0-9]+$ ]] || cents=500   # unknown price: assume $5/hr, on the high side
+    # Estimated cost for the ledger: the live catalogue price of the option that was requested.
+    g=$(jq -r '.tool_input.gpu_type // empty' <<<"$input"); r=$(jq -r '.tool_input.region // empty' <<<"$input"); n=$(jq -r '.tool_input.gpu_count // 1' <<<"$input")
+    cents=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "https://api.hyperbolic.xyz/v2/on-demand/rental-options" \
+      | jq -r --arg g "$g" --arg r "$r" --argjson n "$n" '[.[] | select(.gpuType==$g and .region==$r and .gpuCount==$n)] | first | .costPerHourCents // empty')
+    [[ "$cents" =~ ^[0-9]+$ ]] || cents=500   # option no longer listed: assume $5/hr, on the high side
     est=$(awk -v c="$cents" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", c/100*m/60}')
 
     # The timer reads HYPERBOLIC_API_TOKEN from its own environment ($1..$4 are not secrets).
@@ -40,13 +44,15 @@ case "$tool" in
     nohup bash -c '
       sleep "$1"
       for attempt in 1 2 3; do
-        out=$(curl -s --max-time 20 -X POST -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" -H "Content-Type: application/json" \
+        code=$(curl -s --max-time 20 -o "$4.last" -w "%{http_code}" -X POST -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" -H "Content-Type: application/json" \
               -d "{\"rentalId\":$2,\"reason\":\"auto-terminate\"}" "$3/terminate")
-        echo "$out" >> "$4"
-        if grep -q "\"rentalId\"" <<<"$out"; then echo "$(date -u +%FT%TZ) auto-terminated $2" >> "$4"; exit 0; fi
+        cat "$4.last" >> "$4"; echo " HTTP $code" >> "$4"
+        if [[ "$code" == "200" ]]; then echo "$(date -u +%FT%TZ) auto-terminated $2" >> "$4"; exit 0; fi
         sleep 30
       done
       echo "$(date -u +%FT%TZ) AUTO-TERMINATE FAILED for $2 after 3 attempts, terminate it by hand" >> "$4"
+      command -v osascript >/dev/null && osascript -e "display notification \"Rental $2 is still running. Terminate it by hand.\" with title \"Hyperbolic auto-terminate FAILED\"" 2>/dev/null
+      command -v notify-send >/dev/null && notify-send "Hyperbolic auto-terminate FAILED" "Rental $2 is still running. Terminate it by hand." 2>/dev/null
     ' _ "$((MAX_MINUTES*60))" "$id" "$BASE" "$LEDGER.log" >/dev/null 2>&1 &
     pid=$!; disown "$pid" 2>/dev/null || true
 

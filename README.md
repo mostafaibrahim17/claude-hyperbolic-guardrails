@@ -8,7 +8,9 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 |---|---|
 | `server/index.ts` | Hyperbolic's official MCP server, patched to the live v2 API. `server/hyperbolic-mcp-v2.patch` is the same change as a diff. Drop it over `src/index.ts` in [hyperbolic-mcp](https://github.com/HyperbolicLabs/hyperbolic-mcp) and build. |
 | `guard.sh` | PreToolUse hook. Prices the requested option from Hyperbolic's live catalogue and blocks `rent-gpu-instance` when the cost would pass your daily cap, when too many rentals are already live, or when your balance cannot cover it. Any error blocks. |
-| `autoterminate.sh` | PostToolUse hook. Starts a timer after a rent that terminates the rental when the window runs out, and cancels it if you terminate by hand. |
+| `autoterminate.sh` | PostToolUse hook. Starts a timer after a rent that terminates the rental when the window runs out, and cancels it if you terminate by hand. The terminate call is judged by HTTP status and retried three times; a final failure raises a desktop notification. |
+| `reaper.sh` | Cron backstop. Terminates any live rental older than the window, so a dead timer, a reboot, or a closed laptop cannot leave a machine billing. Run it every five minutes with the token in the environment. |
+| `bench/bench.py` | One-minute GPU benchmark (bf16 matmul and memory bandwidth, CUDA-event timed, median of five) that prints its own cost. |
 | `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
 | `config/claude_desktop_config.json` | Server entry for the Claude Desktop chat app, which does not run Claude Code hooks. Only its approval dialog applies there. |
 | `transcript/run-2026-09-10.md` | The real run: list, rent, nvidia-smi, a blocked over-cap request, manual terminate, and an automatic terminate. |
@@ -51,6 +53,14 @@ The official server was last updated in May 2025 and calls a v1 marketplace API 
 | `HYPERBOLIC_MAX_LIVE` | 1 | How many rentals may be live at once. A rent is blocked when this many are already Pending or Running. |
 | `HYPERBOLIC_MAX_MINUTES` | 30 | Auto-terminate window. Also the length used for estimates. |
 | `HYPERBOLIC_LEDGER` | `~/hyperbolic-guardrails/ledger.jsonl` | Where rentals and timer PIDs are recorded. |
+
+## Backstop
+
+The timer is a process on your laptop. For anything you cannot watch, run the reaper from cron:
+
+```
+*/5 * * * * HYPERBOLIC_API_TOKEN=$(cat ~/.hyperbolic_token) HYPERBOLIC_MAX_MINUTES=30 /path/to/reaper.sh >> ~/hyperbolic-guardrails/reaper.log 2>&1
+```
 
 ## Limits
 
