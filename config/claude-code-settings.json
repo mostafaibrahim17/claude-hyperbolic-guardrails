@@ -9,7 +9,9 @@
     ],
     "ask": [
       "mcp__hyperbolic-gpu__rent-gpu-instance",
-      "mcp__hyperbolic-gpu__terminate-gpu-instance"
+      "mcp__hyperbolic-gpu__terminate-gpu-instance",
+      "mcp__hyperbolic-gpu__ssh-connect",
+      "mcp__hyperbolic-gpu__remote-shell"
     ],
     "deny": [
       "Bash(curl *hyperbolic*)",

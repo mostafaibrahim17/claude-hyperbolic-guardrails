@@ -9,9 +9,9 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 | `server/index.ts` | Hyperbolic's official MCP server, patched to the live v2 API. `server/hyperbolic-mcp-v2.patch` is the same change as a diff. Drop it over `src/index.ts` in [hyperbolic-mcp](https://github.com/HyperbolicLabs/hyperbolic-mcp) and build. |
 | `guard.sh` | PreToolUse hook. Prices the requested option from Hyperbolic's live catalogue and blocks `rent-gpu-instance` when the cost would pass your daily cap, when too many rentals are already live, or when your balance cannot cover it. Any error blocks. |
 | `autoterminate.sh` | PostToolUse hook. Starts a timer after a rent that terminates the rental when the window runs out, and cancels it if you terminate by hand. The terminate call is judged by HTTP status and retried three times; a final failure raises a desktop notification. |
-| `reaper.sh` | Cron backstop. Terminates any live rental older than the window, so a dead timer, a reboot, or a closed laptop cannot leave a machine billing. Run it every five minutes with the token in the environment. |
+| `reaper.sh` | Cron backstop. Terminates any live rental the guard created (its id is in the ledger) that is older than the window, so a dead timer, a reboot, or a closed laptop cannot leave a machine billing. Rentals made elsewhere are left alone unless `REAPER_ALL=1`. |
 | `bench/bench.py` | One-minute GPU benchmark (bf16 matmul and memory bandwidth, CUDA-event timed, median of five) that prints its own cost. |
-| `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
+| `config/claude-code-settings.json` | Permission rules (ask before rent, terminate, ssh-connect and remote-shell; deny direct API calls from the shell) and the hook wiring for `~/.claude/settings.json`. |
 | `config/claude_desktop_config.json` | Server entry for the standalone Claude Desktop chat app. Hooks are a Claude Code feature, so only the chat app's approval dialog applies there. |
 | `transcript/run-2026-09-12.md` | The real runs on the shipped scripts: list, rent, nvidia-smi, benchmark, three different blocks, manual terminate, and an automatic terminate. `run-2026-09-10.md` is the earlier run on the first version of the scripts, kept for the bug it found. |
 
@@ -66,7 +66,7 @@ The timer is a process on your laptop. For anything you cannot watch, run the re
 
 - Everything runs on your machine. The agent's shell inherits your API key, so the hooks gate the tool, not the credential. Anything that can edit `settings.json` can remove the hooks. Hyperbolic allows no overdraft, so your account balance is the one ceiling nothing here can bypass.
 - The timer is a sleeping process. It pauses while the laptop sleeps and dies on logout or reboot. It starts when the order is accepted, so the window includes boot time. It is a hard stop and saves nothing first.
-- The budget hook fails closed: if the balance check errors, the rent is blocked.
+- The budget hook fails closed on its own errors. The mechanism around it does not: if the hook cannot run at all (wrong path, missing `chmod +x`, `jq` not on PATH), Claude Code treats that as a hook error and lets the call proceed. Test with an over-cap rent after installing.
 - The ledger has no lock, so two rents placed at the same moment can both pass the cap.
 - On-Demand virtual machines only. Reserved clusters and bare metal are not covered.
 - Hyperbolic's inventory and prices change weekly. Check `list-available-gpus` before assuming a price.
