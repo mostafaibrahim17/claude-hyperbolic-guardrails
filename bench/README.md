@@ -1,8 +1,6 @@
 # bench
 
-`bench.py` measures bf16 matmul throughput (8192x8192, 30 timed iterations) and
-device memory bandwidth (4 GB copy), then prints one JSON line including the
-cost of the run at the hourly price you pass as the first argument.
+`bench.py` measures bf16 matmul throughput (8192x8192, five repeats of 200 iterations, CUDA-event timed, median reported) and device memory bandwidth (4 GB copy, same method), then prints one JSON line including the cost of the run at the hourly price you pass as the first argument.
 
 On the instance:
 

@@ -13,7 +13,7 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 | `bench/bench.py` | One-minute GPU benchmark (bf16 matmul and memory bandwidth, CUDA-event timed, median of five) that prints its own cost. |
 | `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
 | `config/claude_desktop_config.json` | Server entry for the Claude Desktop chat app, which does not run Claude Code hooks. Only its approval dialog applies there. |
-| `transcript/run-2026-09-10.md` | The real run: list, rent, nvidia-smi, a blocked over-cap request, manual terminate, and an automatic terminate. |
+| `transcript/run-2026-09-12.md` | The real runs on the shipped scripts: list, rent, nvidia-smi, benchmark, three different blocks, manual terminate, and an automatic terminate. `run-2026-09-10.md` is the earlier run on the first version of the scripts, kept for the bug it found. |
 
 ## Why the server is patched
 
@@ -37,13 +37,13 @@ The official server was last updated in May 2025 and calls a v1 marketplace API 
      -e SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hyperbolic_mcp \
      -- node /absolute/path/to/hyperbolic-mcp/build/index.js
    ```
-5. Copy `guard.sh` and `autoterminate.sh` to `~/hyperbolic-guardrails/` and `chmod +x` them. Merge `config/claude-code-settings.json` into `~/.claude/settings.json`, fixing the hook paths.
+5. Copy `guard.sh`, `autoterminate.sh` and `reaper.sh` to `~/hyperbolic-guardrails/` and `chmod +x` them. The hook matcher and the scripts key on the server name `hyperbolic-gpu`; if you register the server under another name, change both. Merge `config/claude-code-settings.json` into `~/.claude/settings.json`, fixing the hook paths.
 6. Export the variables in the shell you start Claude from, then run `claude`:
    ```bash
    export HYPERBOLIC_API_TOKEN=your-key HYPERBOLIC_BUDGET_USD=10 HYPERBOLIC_MAX_MINUTES=30 HYPERBOLIC_MAX_LIVE=1
    ```
 
-`jq` and `curl` are required. Node 18 or newer for the server.
+`jq` 1.6+ and `curl` are required, Node 18 or newer for the server. Tested on macOS 14 with Claude Code 2.1.261; the scripts are plain bash and should run on Linux, but only the reaper's age check has been tested there.
 
 ## Settings
 
