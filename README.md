@@ -62,6 +62,11 @@ The timer is a process on your laptop. For anything you cannot watch, run the re
 */5 * * * * HYPERBOLIC_API_TOKEN=$(cat ~/.hyperbolic_token) HYPERBOLIC_MAX_MINUTES=30 /path/to/reaper.sh >> ~/hyperbolic-guardrails/reaper.log 2>&1
 ```
 
+Create the token file first with `umask 077; echo sk_live_... > ~/.hyperbolic_token`.
+
+```
+```
+
 ## Limits
 
 - Everything runs on your machine. The agent's shell inherits your API key, so the hooks gate the tool, not the credential. Anything that can edit `settings.json` can remove the hooks. Hyperbolic allows no overdraft, so your account balance is the one ceiling nothing here can bypass.

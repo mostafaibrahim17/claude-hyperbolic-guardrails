@@ -35,10 +35,12 @@ case "$tool" in
     # Estimated cost for the ledger: the live catalogue price of the option that was requested.
     g=$(jq -r '.tool_input.gpu_type // empty' <<<"$input"); r=$(jq -r '.tool_input.region // empty' <<<"$input"); n=$(jq -r '.tool_input.gpu_count // 1' <<<"$input")
     cents=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "https://api.hyperbolic.xyz/v2/on-demand/rental-options" \
-      | jq -r --arg g "$g" --arg r "$r" --argjson n "$n" '[.[] | select(.gpuType==$g and .region==$r and .gpuCount==$n)] | first | .costPerHourCents // empty')
+      | jq -r --arg g "$g" --arg r "$r" --argjson n "$n" '[.[] | select(.enabled and .machineType=="virtual-machine" and .gpuType==$g and .region==$r and .gpuCount==$n)] | first | .costPerHourCents // empty')
     [[ "$cents" =~ ^[0-9]+$ ]] || cents=500   # option no longer listed: assume $5/hr, on the high side
     est=$(awk -v c="$cents" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", c/100*m/60}')
 
+    jq -cn --arg id "$id" --arg pid "0" --arg est "$est" --arg t "$(date -u +%FT%TZ)" \
+      '{rental_id:($id|tonumber), timer_pid:($pid|tonumber), est_usd:($est|tonumber), rented_at:$t}' >> "$LEDGER"
     # The timer reads HYPERBOLIC_API_TOKEN from its own environment ($1..$4 are not secrets).
     export HYPERBOLIC_API_TOKEN
     nohup bash -c '
@@ -55,9 +57,9 @@ case "$tool" in
       command -v notify-send >/dev/null && notify-send "Hyperbolic auto-terminate FAILED" "Rental $2 is still running. Terminate it by hand." 2>/dev/null
     ' _ "$((MAX_MINUTES*60))" "$id" "$BASE" "$LEDGER.log" >/dev/null 2>&1 &
     pid=$!; disown "$pid" 2>/dev/null || true
+    # record the real timer pid now that it exists
+    tmp=$(mktemp) && jq -c --argjson id "$id" --argjson pid "$pid" 'if .rental_id==$id and .timer_pid==0 then .timer_pid=$pid else . end' "$LEDGER" > "$tmp" && mv "$tmp" "$LEDGER"
 
-    jq -cn --arg id "$id" --arg pid "$pid" --arg est "$est" --arg t "$(date -u +%FT%TZ)" \
-      '{rental_id:($id|tonumber), timer_pid:($pid|tonumber), est_usd:($est|tonumber), rented_at:$t}' >> "$LEDGER"
     echo "auto-terminate armed: $id in ${MAX_MINUTES} min (timer pid $pid)" >&2
     ;;
 
