@@ -1,3 +1,6 @@
+// Derived from HyperbolicLabs/hyperbolic-mcp (MIT), upstream commit d2962d3.
+// Copyright (c) 2025 Hyperbolic Labs. Modifications (v2 API routes, get-account-balance,
+// non-blocking rent) copyright (c) 2026 the claude-hyperbolic-guardrails contributors, MIT.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

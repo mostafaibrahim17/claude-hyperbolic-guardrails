@@ -1,0 +1,871 @@
+diff --git a/src/index.ts b/src/index.ts
+index a9efb7f..2045a10 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -8,13 +8,15 @@ import { wait } from "./utils.js";
+ // Load environment variables
+ dotenv.config();
+ 
+-// Hyperbolic API base URL
+-const HYPERBOLIC_API_BASE = "https://api.hyperbolic.xyz/v1";
++// Hyperbolic API base URL.
++// The original server targeted /v1/marketplace, which Hyperbolic retired.
++// The live API is the v2 "Castle" API: https://api.hyperbolic.xyz/v2/openapi.json
++const HYPERBOLIC_API_BASE = "https://api.hyperbolic.xyz/v2";
+ 
+ // Create MCP server instance
+ const server = new McpServer({
+   name: "hyperbolic-gpu-server",
+-  version: "1.0.0",
++  version: "2.0.0",
+ });
+ 
+ // Utility function to make authenticated API requests to Hyperbolic
+@@ -60,526 +62,308 @@ async function makeHyperbolicRequest(
+   }
+ }
+ 
+-// Utility function to format RAM values
+-function formatRAM(ramInMB: number): string {
+-  if (ramInMB >= 1048576) {
+-    // 1 TB in MB
+-    return `${(ramInMB / 1048576).toFixed(2)} TB`;
+-  } else if (ramInMB >= 1024) {
+-    // 1 GB in MB
+-    return `${(ramInMB / 1024).toFixed(2)} GB`;
+-  } else {
+-    return `${ramInMB} MB`;
++const GPU_TYPES = ["h100", "h200", "b200"] as const;
++
++function usd(cents: number | null | undefined): number | null {
++  return typeof cents === "number" ? Math.round(cents) / 100 : null;
++}
++
++function errorResult(error: unknown) {
++  return {
++    content: [
++      {
++        type: "text" as const,
++        text: JSON.stringify(
++          { status: "error", error: (error as Error).message },
++          null,
++          2
++        ),
++      },
++    ],
++    isError: true,
++  };
++}
++
++function jsonResult(payload: unknown) {
++  return {
++    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
++  };
++}
++
++// Shape a v2 rental option for the model
++function formatOption(o: any) {
++  return {
++    gpu_type: o.gpuType,
++    gpu_count: o.gpuCount,
++    region: o.region,
++    machine_type: o.machineType,
++    gpu_form_factor: o.gpuFormFactor,
++    network: o.connectionType,
++    price_per_hour_usd: usd(o.costPerHourCents),
++    total_available: o.totalAvailable ?? null,
++    node_specs: (o.nodes || []).map((n: any) => ({
++      cpu: n.cpuModel,
++      vcpus: n.vcpuCount,
++      ram_gb: n.ramGb,
++      storage_gb: n.storageGb,
++      gpus: n.gpuCount,
++    })),
++  };
++}
++
++// Shape a v2 rental record for the model
++function formatRental(r: any) {
++  const ssh = r.providerData?.sshNetworking || [];
++  return {
++    rental_id: r.id,
++    status: r.status,
++    gpu_type: r.gpuType,
++    gpu_count: r.gpuCount,
++    region: r.region,
++    label: r.label ?? r.name ?? null,
++    created_at: r.createdAt ?? null,
++    started_at: r.startedAt ?? null,
++    price_per_hour_usd: usd(r.currentTerm?.costPerHourCents),
++    ssh: ssh.map((s: any) => ({
++      host: s.host,
++      port: s.port,
++      user: s.user,
++      command: `ssh -p ${s.port} ${s.user}@${s.host}`,
++    })),
++    public_ips: (r.providerData?.nodeNetworking || []).map(
++      (n: any) => n.publicIp
++    ),
++  };
++}
++
++async function fetchVmOptions(): Promise<any[]> {
++  const data = await makeHyperbolicRequest("/on-demand/rental-options");
++  if (!Array.isArray(data)) {
++    throw new Error("Invalid response format from Hyperbolic API");
+   }
++  return data.filter(
++    (o: any) => o.enabled && o.machineType === "virtual-machine"
++  );
++}
++
++async function fetchVmRentals(): Promise<any[]> {
++  const data = await makeHyperbolicRequest("/on-demand/virtual-machine-rentals");
++  if (!Array.isArray(data)) {
++    throw new Error("Invalid response format from Hyperbolic API");
++  }
++  return data;
+ }
+ 
+ // Register tool for listing available GPUs
+ server.tool(
+   "list-available-gpus",
+   {
+-    filters: z
+-      .object({})
+-      .passthrough()
++    gpu_type: z
++      .enum(GPU_TYPES)
+       .optional()
+-      .describe("Optional filters for GPU listing"),
++      .describe("Optional filter: h100, h200 or b200"),
+   },
+-  async ({ filters = {} }) => {
++  async ({ gpu_type }) => {
+     try {
+-      const data = await makeHyperbolicRequest("/marketplace", "POST", {
+-        filters,
+-      });
+-
+-      if (!data.instances || !Array.isArray(data.instances)) {
+-        throw new Error("Invalid response format from Hyperbolic API");
+-      }
+-
+-      // Format the response for better readability
+-      const availableGPUs = data.instances
+-        .filter((instance: any) => instance.status === "node_ready")
+-        .map((instance: any) => {
+-          // Extract GPU information
+-          const gpuModels = instance.hardware?.gpus
+-            ? [...new Set(instance.hardware.gpus.map((gpu: any) => gpu.model))]
+-            : ["Unknown"];
+-
+-          const totalGPUs = instance.gpus_total || 0;
+-          const reservedGPUs = instance.gpus_reserved || 0;
+-          const availableGPUCount = totalGPUs - reservedGPUs;
+-
+-          // Extract RAM and storage
+-          const totalRAM = instance.hardware?.ram?.[0]?.capacity || 0;
+-          const totalStorage = instance.hardware?.storage?.[0]?.capacity || 0;
+-
+-          // Get price information
+-          const pricePerHour = instance.pricing?.price?.amount || 0;
+-
+-          return {
+-            cluster_name: instance.cluster_name || "unknown",
+-            node_name: instance.id || "unknown",
+-            gpu_model: gpuModels.join(", "),
+-            gpu_count: totalGPUs,
+-            available_gpus: availableGPUCount,
+-            gpu_vram_gb: instance.hardware?.gpus?.[0]?.ram
+-              ? Math.round(instance.hardware.gpus[0].ram / 1024)
+-              : "Unknown",
+-            cpu_cores: instance.hardware?.cpus?.[0]?.virtual_cores || "Unknown",
+-            ram_gb: totalRAM,
+-            storage_gb: totalStorage,
+-            price_per_hour: `$${(pricePerHour / 100).toFixed(2)}`,
+-            reserved: instance.reserved ? "Yes" : "No",
+-            region: instance.location?.region || "Unknown",
+-          };
+-        })
+-        // Filter out instances with no available GPUs
+-        .filter((instance: any) => instance.available_gpus > 0);
+-
+-      if (availableGPUs.length === 0) {
+-        return {
+-          content: [
+-            {
+-              type: "text",
+-              text: JSON.stringify({
+-                status: "success",
+-                available_gpus: [],
+-                message: "No available GPU instances found. All instances are currently reserved or in use."
+-              }, null, 2)
+-            },
+-          ],
+-        };
++      let options = await fetchVmOptions();
++      if (gpu_type) options = options.filter((o: any) => o.gpuType === gpu_type);
++
++      if (options.length === 0) {
++        return jsonResult({
++          status: "success",
++          available_options: [],
++          message: "No on-demand virtual machine options are available right now.",
++        });
+       }
+ 
+-      // Format the response as JSON
+-      const jsonResponse = {
++      return jsonResult({
+         status: "success",
+-        available_gpus: availableGPUs.map((gpu: {
+-          cluster_name: string;
+-          node_name: string;
+-          gpu_model: string;
+-          available_gpus: number;
+-          gpu_count: number;
+-          gpu_vram_gb: number | string;
+-          cpu_cores: number | string;
+-          ram_gb: number;
+-          storage_gb: number;
+-          price_per_hour: string;
+-          region: string;
+-          reserved: boolean;
+-        }) => ({
+-          cluster_name: gpu.cluster_name,
+-          node_name: gpu.node_name,
+-          gpu_model: gpu.gpu_model,
+-          gpu_count: {
+-            available: gpu.available_gpus,
+-            total: gpu.gpu_count
+-          },
+-          specifications: {
+-            vram_gb: gpu.gpu_vram_gb,
+-            cpu_cores: gpu.cpu_cores,
+-            ram_gb: gpu.ram_gb,
+-            storage_gb: gpu.storage_gb
+-          },
+-          pricing: {
+-            per_hour: gpu.price_per_hour
+-          },
+-          region: gpu.region,
+-          is_reserved: gpu.reserved
+-        })),
+-        total_available_instances: availableGPUs.length,
++        available_options: options.map(formatOption),
++        total_options: options.length,
+         rental_instructions: {
+           tool: "rent-gpu-instance",
+-          required_parameters: ["cluster_name", "node_name", "gpu_count"]
+-        }
+-      };
+-
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify(jsonResponse, null, 2)
+-          },
+-        ],
+-      };
++          required_parameters: ["gpu_type", "region", "gpu_count"],
++          note: "gpu_type and region must match one of the options above exactly.",
++        },
++      });
+     } catch (error) {
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify({
+-              status: "error",
+-              error: (error as Error).message
+-            }, null, 2)
+-          },
+-        ],
+-        isError: true,
+-      };
++      return errorResult(error);
+     }
+   }
+ );
+ 
+-// Register tool for renting a GPU instance
++// Register tool for account balance (read-only)
++server.tool("get-account-balance", {}, async () => {
++  try {
++    const data = await makeHyperbolicRequest("/customer/balance");
++    return jsonResult({
++      status: "success",
++      balance_usd: usd(data.balanceCents),
++      max_overdraft_usd: usd(data.maxOverdraftCents),
++    });
++  } catch (error) {
++    return errorResult(error);
++  }
++});
++
++// Register tool for details of one GPU option
+ server.tool(
+-  "rent-gpu-instance",
++  "get-gpu-option-details",
+   {
+-    cluster_name: z
+-      .string()
+-      .describe(
+-        "The name of the cluster to rent (e.g., extrasmall-chamomile-duck)"
+-      ),
+-    node_name: z
+-      .string()
+-      .describe("The name of the node (e.g., prd-acl-msi-02.fen.intra)"),
+-    gpu_count: z.number().int().min(1).describe("Number of GPUs to rent"),
++    gpu_type: z.enum(GPU_TYPES).describe("h100, h200 or b200"),
++    region: z.string().describe("Region code exactly as returned by list-available-gpus"),
+   },
+-  async ({ cluster_name, node_name, gpu_count }) => {
++  async ({ gpu_type, region }) => {
+     try {
+-      // First, verify that the cluster exists and has available GPUs
+-      const marketplaceData = await makeHyperbolicRequest(
+-        "/marketplace",
+-        "POST",
+-        { filters: {} }
++      const options = await fetchVmOptions();
++      const matches = options.filter(
++        (o: any) => o.gpuType === gpu_type && o.region === region
+       );
+-
+-      if (
+-        !marketplaceData.instances ||
+-        !Array.isArray(marketplaceData.instances)
+-      ) {
+-        throw new Error("Invalid response format from Hyperbolic API");
+-      }
+-
+-      // Find the specified cluster
+-      const instance = marketplaceData.instances.find(
+-        (i: any) => i.cluster_name === cluster_name && i.id === node_name
+-      );
+-
+-      if (!instance) {
+-        return {
+-          content: [
+-            {
+-              type: "text",
+-              text: `Error: The specified cluster (${cluster_name}) or node (${node_name}) was not found. Please check the names and try again.`,
+-            },
+-          ],
+-          isError: true,
+-        };
+-      }
+-
+-      // Check if the instance is available
+-      const availableGPUCount =
+-        (instance.gpus_total || 0) - (instance.gpus_reserved || 0);
+-
+-      if (availableGPUCount < gpu_count) {
++      if (matches.length === 0) {
+         return {
+           content: [
+             {
+               type: "text",
+-              text: `Error: The requested number of GPUs (${gpu_count}) exceeds the available GPUs (${availableGPUCount}) on this cluster.`,
++              text: `No enabled virtual machine option for ${gpu_type} in ${region}. Run list-available-gpus to see current options.`,
+             },
+           ],
+           isError: true,
+         };
+       }
+-
+-      // If validation passes, proceed with the rental
+-      const requestBody = {
+-        cluster_name,
+-        node_name,
+-        gpu_count,
+-      };
+-
+-      const data = await makeHyperbolicRequest(
+-        "/marketplace/instances/create",
+-        "POST",
+-        requestBody
+-      );
+-
+-      // Wait for 60 seconds to allow the instance to start up
+-      const waitMessage = "Waiting 100 seconds for the instance to start up...";
+-      console.error(waitMessage);
+-      await wait(100000);
+-      const completeMessage = "Wait complete. Instance should be ready for SSH connection.";
+-      console.error(completeMessage);
+-
+-      // Format the response as JSON
+-      const jsonResponse = {
++      return jsonResult({
+         status: "success",
+-        rental_details: {
+-          cluster_name,
+-          node_name,
+-          gpus_rented: gpu_count,
+-          instance_id: data.instance_id || null,
+-          status: data.status || "created"
+-        },
+-        hardware_details: {
+-          gpu_model: instance.hardware?.gpus?.[0]?.model || null,
+-          gpu_vram: instance.hardware?.gpus?.[0]?.ram ? formatRAM(instance.hardware.gpus[0].ram) : null,
+-          cpu: {
+-            model: instance.hardware?.cpus?.[0]?.model || null,
+-            virtual_cores: instance.hardware?.cpus?.[0]?.virtual_cores || null
+-          }
+-        },
+-        pricing: {
+-          amount: instance.pricing?.price?.amount || null,
+-          period: instance.pricing?.price?.period || "hour"
++        options: matches.map(formatOption),
++        rental_instructions: {
++          tool: "rent-gpu-instance",
++          parameters: { gpu_type, region, gpu_count: matches[0].gpuCount },
+         },
+-        connection_info: data.connection_info || null,
+-        startup_status: {
+-          wait_message: waitMessage,
+-          complete_message: completeMessage,
+-          wait_duration_seconds: 60
+-        }
+-      };
+-
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify(jsonResponse, null, 2)
+-          },
+-        ],
+-      };
++      });
+     } catch (error) {
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify({
+-              status: "error",
+-              error: (error as Error).message
+-            }, null, 2)
+-          },
+-        ],
+-        isError: true,
+-      };
++      return errorResult(error);
+     }
+   }
+ );
+ 
+-// Register tool for terminating a GPU instance
++// Register tool for renting a GPU instance
+ server.tool(
+-  "terminate-gpu-instance",
++  "rent-gpu-instance",
+   {
+-    instance_id: z
++    gpu_type: z.enum(GPU_TYPES).describe("h100, h200 or b200"),
++    region: z
+       .string()
+-      .describe("The ID of the instance to terminate"),
++      .describe("Region code exactly as returned by list-available-gpus (e.g. us-east-1)"),
++    gpu_count: z.number().int().min(1).describe("Number of GPUs to rent"),
++    label: z.string().optional().describe("Optional label for the rental"),
+   },
+-  async ({ instance_id }) => {
++  async ({ gpu_type, region, gpu_count, label }) => {
+     try {
+-      // First, verify that the instance exists and belongs to the user
+-      const instancesData = await makeHyperbolicRequest("/marketplace/instances");
+-
+-      if (!instancesData.instances || !Array.isArray(instancesData.instances)) {
+-        throw new Error("Invalid response format from Hyperbolic API");
+-      }
+-
+-      // Find the specified instance
+-      const instance = instancesData.instances.find(
+-        (i: any) => i.id === instance_id
++      // Validate against live options so a typo cannot rent the wrong thing
++      const options = await fetchVmOptions();
++      const option = options.find(
++        (o: any) =>
++          o.gpuType === gpu_type && o.region === region && o.gpuCount === gpu_count
+       );
+ 
+-      if (!instance) {
++      if (!option) {
++        const alternatives = options
++          .filter((o: any) => o.gpuType === gpu_type)
++          .map((o: any) => `${o.gpuCount}x ${o.gpuType} in ${o.region} at $${usd(o.costPerHourCents)}/hr`);
+         return {
+           content: [
+             {
+               type: "text",
+-              text: `Error: Instance with ID "${instance_id}" was not found. Please check the ID and try again.`,
++              text:
++                `Error: no enabled option for ${gpu_count}x ${gpu_type} in ${region}. ` +
++                (alternatives.length
++                  ? `Available: ${alternatives.join("; ")}.`
++                  : "Run list-available-gpus to see what is available."),
+             },
+           ],
+           isError: true,
+         };
+       }
+ 
+-      // Proceed with termination
+-      const requestBody = {
+-        id: instance_id,
++      const requestBody: any = {
++        gpuType: gpu_type,
++        region,
++        gpuCount: gpu_count,
++        networkType: option.connectionType || "ethernet",
++        termType: "on-demand",
+       };
++      if (label) requestBody.label = label;
+ 
+-      const data = await makeHyperbolicRequest(
+-        "/marketplace/instances/terminate",
++      const created = await makeHyperbolicRequest(
++        "/on-demand/virtual-machine-rentals",
+         "POST",
+         requestBody
+       );
+ 
+-      // Format the response in a more readable way
+-      const formattedResponse = `# GPU Instance Successfully Terminated!
+-
+-## Termination Details
+-- Instance ID: ${instance_id}
+-- Status: Terminated
+-
+-## Instance Information
+-- GPU Model: ${instance.instance?.hardware?.gpus?.[0]?.model || "Unknown"}
+-- GPU Count: ${instance.instance?.gpu_count || "Unknown"}
+-- Created: ${instance.created ? new Date(instance.created).toLocaleString() : "Unknown"}
+-- Terminated: ${new Date().toLocaleString()}
+-
+-The instance has been terminated and all associated resources have been released.`;
+-
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: formattedResponse,
+-          },
+-        ],
+-      };
++      // Return immediately. Booting takes minutes and a blocking call risks
++      // being timed out or retried by the client, which would rent twice.
++      const rental = created;
++      return jsonResult({
++        status: rental.status === "Running" ? "success" : "pending",
++        rental: formatRental(rental),
++        price_per_hour_usd: usd(option.costPerHourCents),
++        note:
++          rental.status === "Running"
++            ? "Instance is running. Use ssh-connect with the host, port and user above."
++            : `Rental ${rental.id} is ${rental.status ?? "Pending"}. Boot takes a few minutes. Call list-user-instances until status is Running and ssh details appear. Do not call rent-gpu-instance again.`,
++      });
+     } catch (error) {
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: `Error terminating GPU instance: ${(error as Error).message}`,
+-          },
+-        ],
+-        isError: true,
+-      };
++      return errorResult(error);
+     }
+   }
+ );
+ 
+-// Register tool for getting details of a specific cluster
++// Register tool for terminating a GPU instance
+ server.tool(
+-  "get-cluster-details",
++  "terminate-gpu-instance",
+   {
+-    cluster_name: z
+-      .string()
+-      .describe("The name of the cluster to get details for"),
++    rental_id: z
++      .number()
++      .int()
++      .describe("The numeric rental_id from list-user-instances or rent-gpu-instance"),
++    reason: z.string().optional().describe("Optional reason, recorded by Hyperbolic"),
+   },
+-  async ({ cluster_name }) => {
++  async ({ rental_id, reason }) => {
+     try {
+-      // First, get all instances
+-      const data = await makeHyperbolicRequest("/marketplace", "POST", {
+-        filters: {},
+-      });
+-
+-      if (!data.instances || !Array.isArray(data.instances)) {
+-        throw new Error("Invalid response format from Hyperbolic API");
+-      }
+-
+-      // Find the specific instance by cluster_name
+-      const instance = data.instances.find(
+-        (i: any) => i.cluster_name === cluster_name
+-      );
+-
+-      if (!instance) {
++      const rentals = await fetchVmRentals();
++      const rental = rentals.find((r: any) => r.id === rental_id);
++      if (!rental) {
+         return {
+           content: [
+             {
+               type: "text",
+-              text: `Cluster "${cluster_name}" not found. Please check the cluster name and try again.`,
++              text: `Error: rental ${rental_id} was not found among your active rentals.`,
+             },
+           ],
+           isError: true,
+         };
+       }
+ 
+-      // Format detailed information in a more readable way
+-      const gpuInfo =
+-        instance.hardware?.gpus
+-          ?.map(
+-            (gpu: any, index: number) =>
+-              `GPU ${index + 1}: ${gpu.model || "Unknown"}, VRAM: ${formatRAM(
+-                gpu.ram || 0
+-              )}`
+-          )
+-          .join("\n") || "No GPU information available";
+-
+-      const cpuInfo = instance.hardware?.cpus?.[0]
+-        ? `${instance.hardware.cpus[0].model || "Unknown"}, ${
+-            instance.hardware.cpus[0].virtual_cores || 0
+-          } virtual cores`
+-        : "No CPU information available";
+-
+-      const ramInfo = instance.hardware?.ram?.[0]
+-        ? `${formatRAM(instance.hardware.ram[0].capacity || 0)}`
+-        : "No RAM information available";
+-
+-      const storageInfo = instance.hardware?.storage?.[0]
+-        ? `${instance.hardware.storage[0].capacity || 0} GB`
+-        : "No storage information available";
+-
+-      const pricing = instance.pricing?.price
+-        ? `${instance.pricing.price.amount || 0} per ${
+-            instance.pricing.price.period || "hour"
+-          }`
+-        : "Pricing information not available";
+-
+-      const availableGPUCount =
+-        (instance.gpus_total || 0) - (instance.gpus_reserved || 0);
+-      const availabilityStatus =
+-        availableGPUCount > 0 ? "Available" : "Fully Reserved";
+-
+-      // Format the response as JSON
+-      const jsonResponse = {
++      const body: any = { rentalId: rental_id };
++      if (reason) body.reason = reason;
++      const data = await makeHyperbolicRequest(
++        "/on-demand/virtual-machine-rentals/terminate",
++        "POST",
++        body
++      );
++
++      return jsonResult({
+         status: "success",
+-        cluster_info: {
+-          name: cluster_name,
+-          node_name: instance.id || null,
+-          status: instance.status || null,
+-          availability_status: availabilityStatus,
+-          region: instance.location?.region || null,
+-          is_reserved: instance.reserved || false,
+-          has_persistent_storage: instance.has_persistent_storage || false
+-        },
+-        hardware_specs: {
+-          cpu: {
+-            model: instance.hardware?.cpus?.[0]?.model || null,
+-            virtual_cores: instance.hardware?.cpus?.[0]?.virtual_cores || null
+-          },
+-          ram: instance.hardware?.ram?.[0]?.capacity ? formatRAM(instance.hardware.ram[0].capacity) : null,
+-          storage: instance.hardware?.storage?.[0]?.capacity ? `${instance.hardware.storage[0].capacity} GB` : null,
+-          gpus: {
+-            total: instance.gpus_total || 0,
+-            available: availableGPUCount,
+-            reserved: instance.gpus_reserved || 0,
+-            details: instance.hardware?.gpus?.map((gpu: any, index: number) => ({
+-              index: index + 1,
+-              model: gpu.model || null,
+-              vram: gpu.ram ? formatRAM(gpu.ram) : null
+-            })) || []
+-          }
++        rental_id,
++        message: data.message || "Terminated",
++        terminated: {
++          gpu_type: rental.gpuType,
++          gpu_count: rental.gpuCount,
++          region: rental.region,
++          started_at: rental.startedAt ?? rental.createdAt ?? null,
++          terminated_at: new Date().toISOString(),
+         },
+-        pricing: {
+-          amount: instance.pricing?.price?.amount || null,
+-          period: instance.pricing?.price?.period || "hour"
+-        },
+-        running_instances: instance.instances?.map((inst: any) => ({
+-          id: inst.id,
+-          status: inst.status,
+-          gpu_count: inst.hardware?.filter((h: any) => h.gpu).length || 0,
+-          storage: inst.hardware?.find((h: any) => h.storage)?.storage?.capacity || 0
+-        })) || [],
+-        rental_instructions: {
+-          tool: "rent-gpu-instance",
+-          parameters: {
+-            cluster_name: cluster_name,
+-            node_name: instance.id || "",
+-            gpu_count: Math.min(availableGPUCount, 1),
+-            max_available: availableGPUCount
+-          }
+-        }
+-      };
+-
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify(jsonResponse, null, 2)
+-          },
+-        ],
+-      };
++      });
+     } catch (error) {
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify({
+-              status: "error",
+-              error: (error as Error).message
+-            }, null, 2)
+-          },
+-        ],
+-        isError: true,
+-      };
++      return errorResult(error);
+     }
+   }
+ );
+@@ -812,91 +596,24 @@ server.tool("ssh-disconnect", {}, async () => {
+   }
+ });
+ 
+-// Register tool for listing user's active instances
++// Register tool for listing user's active rentals
+ server.tool("list-user-instances", {}, async () => {
+   try {
+-    const data = await makeHyperbolicRequest("/marketplace/instances");
+-
+-    if (!data.instances || !Array.isArray(data.instances)) {
+-      throw new Error("Invalid response format from Hyperbolic API");
+-    }
+-
+-    if (data.instances.length === 0) {
+-      return {
+-        content: [
+-          {
+-            type: "text",
+-            text: JSON.stringify({
+-              status: "success",
+-              instances: [],
+-              message: "You don't have any active instances on Hyperbolic."
+-            }, null, 2)
+-          },
+-        ],
+-      };
++    const rentals = await fetchVmRentals();
++    if (rentals.length === 0) {
++      return jsonResult({
++        status: "success",
++        instances: [],
++        message: "You don't have any active rentals on Hyperbolic.",
++      });
+     }
+-
+-    // Format the response as JSON
+-    const jsonResponse = {
++    return jsonResult({
+       status: "success",
+-      instances: data.instances.map((instance: any, index: number) => ({
+-        id: instance.id || null,
+-        basic_info: {
+-          status: instance.instance?.status || null,
+-          created: instance.created ? new Date(instance.created).toISOString() : null,
+-          started: instance.start ? new Date(instance.start).toISOString() : null,
+-          ended: instance.end ? new Date(instance.end).toISOString() : null,
+-          owner_id: instance.instance?.owner || null
+-        },
+-        hardware: {
+-          cpu: {
+-            model: instance.instance?.hardware?.cpus?.[0]?.model || null,
+-            virtual_cores: instance.instance?.hardware?.cpus?.[0]?.virtual_cores || null
+-          },
+-          ram: instance.instance?.hardware?.ram?.[0]?.capacity ? formatRAM(instance.instance.hardware.ram[0].capacity) : null,
+-          storage: instance.instance?.hardware?.storage?.[0]?.capacity ? `${instance.instance.hardware.storage[0].capacity} GB` : null,
+-          gpus: {
+-            allocated: instance.instance?.gpu_count || 0,
+-            total: instance.instance?.gpus_total || 0,
+-            details: instance.instance?.hardware?.gpus?.map((gpu: any) => ({
+-              model: gpu.model || null,
+-              vram: gpu.ram ? formatRAM(gpu.ram) : null
+-            })) || []
+-          }
+-        },
+-        pricing: {
+-          amount: instance.instance?.pricing?.price?.amount || null,
+-          period: instance.instance?.pricing?.price?.period || "hour"
+-        },
+-        connection: {
+-          ssh_command: instance.sshCommand || null,
+-          port_mappings: instance.portMappings || []
+-        }
+-      })),
+-      total_instances: data.instances.length
+-    };
+-
+-    return {
+-      content: [
+-        {
+-          type: "text",
+-          text: JSON.stringify(jsonResponse, null, 2)
+-        },
+-      ],
+-    };
++      instances: rentals.map(formatRental),
++      total_instances: rentals.length,
++    });
+   } catch (error) {
+-    return {
+-      content: [
+-        {
+-          type: "text",
+-          text: JSON.stringify({
+-            status: "error",
+-            error: (error as Error).message
+-          }, null, 2)
+-        },
+-      ],
+-      isError: true,
+-    };
++    return errorResult(error);
+   }
+ });
+ 

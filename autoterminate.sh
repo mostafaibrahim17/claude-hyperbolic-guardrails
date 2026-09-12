@@ -48,7 +48,7 @@ case "$tool" in
       done
       echo "$(date -u +%FT%TZ) AUTO-TERMINATE FAILED for $2 after 3 attempts, terminate it by hand" >> "$4"
     ' _ "$((MAX_MINUTES*60))" "$id" "$BASE" "$LEDGER.log" >/dev/null 2>&1 &
-    pid=$!
+    pid=$!; disown "$pid" 2>/dev/null || true
 
     jq -cn --arg id "$id" --arg pid "$pid" --arg est "$est" --arg t "$(date -u +%FT%TZ)" \
       '{rental_id:($id|tonumber), timer_pid:($pid|tonumber), est_usd:($est|tonumber), rented_at:$t}' >> "$LEDGER"
@@ -59,7 +59,7 @@ case "$tool" in
     id=$(jq -r '.tool_input.rental_id' <<<"$input")
     pid=$(jq -r --arg id "$id" 'select((.rental_id|tostring)==$id) | .timer_pid' "$LEDGER" 2>/dev/null | tail -1)
     # Only kill it if that PID is still our timer for this rental, not a reused PID.
-    if [[ "$pid" =~ ^[0-9]+$ ]] && ps -o command= -p "$pid" 2>/dev/null | grep -q -- "auto-terminate.* $id "; then
+    if [[ "$pid" =~ ^[0-9]+$ ]] && ps -o command= -p "$pid" 2>/dev/null | tr '\n' ' ' | grep -q -- "auto-terminate.* $id "; then
       kill "$pid" 2>/dev/null && echo "timer $pid cancelled for $id" >&2
     fi
     ;;

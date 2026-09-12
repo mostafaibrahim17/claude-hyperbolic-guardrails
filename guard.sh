@@ -17,7 +17,7 @@ input=$(cat) || die "could not read hook input"
 tool=$(jq -r '.tool_name' <<<"$input") || die "jq failed on hook input"
 [[ "$tool" == "mcp__hyperbolic-gpu__rent-gpu-instance" ]] || exit 0
 [[ -n "${HYPERBOLIC_API_TOKEN:-}" ]] || die "HYPERBOLIC_API_TOKEN is not set"
-[[ "$MAX_MINUTES" =~ ^[0-9]+$ && "$MAX_LIVE" =~ ^[0-9]+$ ]] || die "MAX_MINUTES and MAX_LIVE must be integers"
+[[ "$MAX_MINUTES" =~ ^[0-9]+$ && "$MAX_LIVE" =~ ^[0-9]+$ && "$BUDGET_USD" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "MAX_MINUTES, MAX_LIVE and BUDGET_USD must be numbers"
 
 gpus=$(jq -r '.tool_input.gpu_count // empty' <<<"$input")
 gpu=$(jq -r '.tool_input.gpu_type // empty' <<<"$input")
@@ -34,6 +34,7 @@ est=$(awk -v c="$cents" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", c/100*m/60}')
 # Live rentals right now
 live=$(get /on-demand/virtual-machine-rentals | jq '[.[] | select(.status=="Pending" or .status=="Running")] | length') \
   || die "could not list live rentals"
+[[ "$live" =~ ^[0-9]+$ ]] || die "could not count live rentals"
 (( live < MAX_LIVE )) || die "$live rental(s) already live, limit is $MAX_LIVE"
 
 # What today has already committed (rows dated today, UTC)

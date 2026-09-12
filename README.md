@@ -6,7 +6,7 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 
 | Path | What it is |
 |---|---|
-| `server/index.ts` | Hyperbolic's official MCP server, patched to the live v2 API. Drop it over `src/index.ts` in [hyperbolic-mcp](https://github.com/HyperbolicLabs/hyperbolic-mcp) and build. |
+| `server/index.ts` | Hyperbolic's official MCP server, patched to the live v2 API. `server/hyperbolic-mcp-v2.patch` is the same change as a diff. Drop it over `src/index.ts` in [hyperbolic-mcp](https://github.com/HyperbolicLabs/hyperbolic-mcp) and build. |
 | `guard.sh` | PreToolUse hook. Prices the requested option from Hyperbolic's live catalogue and blocks `rent-gpu-instance` when the cost would pass your daily cap, when too many rentals are already live, or when your balance cannot cover it. Any error blocks. |
 | `autoterminate.sh` | PostToolUse hook. Starts a timer after a rent that terminates the rental when the window runs out, and cancels it if you terminate by hand. |
 | `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
@@ -24,6 +24,7 @@ The official server was last updated in May 2025 and calls a v1 marketplace API 
 3. Build the patched server:
    ```bash
    git clone https://github.com/HyperbolicLabs/hyperbolic-mcp.git
+   git -C hyperbolic-mcp checkout d2962d3   # the commit the patch was written against
    cp server/index.ts hyperbolic-mcp/src/index.ts
    cd hyperbolic-mcp && npm install && npm run build
    ```
