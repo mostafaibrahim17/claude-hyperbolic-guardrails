@@ -12,7 +12,7 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 | `reaper.sh` | Cron backstop. Terminates any live rental older than the window, so a dead timer, a reboot, or a closed laptop cannot leave a machine billing. Run it every five minutes with the token in the environment. |
 | `bench/bench.py` | One-minute GPU benchmark (bf16 matmul and memory bandwidth, CUDA-event timed, median of five) that prints its own cost. |
 | `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
-| `config/claude_desktop_config.json` | Server entry for the Claude Desktop chat app, which does not run Claude Code hooks. Only its approval dialog applies there. |
+| `config/claude_desktop_config.json` | Server entry for the standalone Claude Desktop chat app. Hooks are a Claude Code feature, so only the chat app's approval dialog applies there. |
 | `transcript/run-2026-09-12.md` | The real runs on the shipped scripts: list, rent, nvidia-smi, benchmark, three different blocks, manual terminate, and an automatic terminate. `run-2026-09-10.md` is the earlier run on the first version of the scripts, kept for the bug it found. |
 
 ## Why the server is patched
