@@ -35,9 +35,14 @@ case "$tool" in
     export HYPERBOLIC_API_TOKEN
     nohup bash -c '
       sleep "$1"
-      curl -s -X POST -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" -H "Content-Type: application/json" \
-           -d "{\"rentalId\":$2,\"reason\":\"auto-terminate\"}" "$3/terminate" >> "$4" 2>&1
-      echo "$(date -u +%FT%TZ) auto-terminated $2" >> "$4"
+      for attempt in 1 2 3; do
+        out=$(curl -s --max-time 20 -X POST -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" -H "Content-Type: application/json" \
+              -d "{\"rentalId\":$2,\"reason\":\"auto-terminate\"}" "$3/terminate")
+        echo "$out" >> "$4"
+        if grep -q "\"rentalId\"" <<<"$out"; then echo "$(date -u +%FT%TZ) auto-terminated $2" >> "$4"; exit 0; fi
+        sleep 30
+      done
+      echo "$(date -u +%FT%TZ) AUTO-TERMINATE FAILED for $2 after 3 attempts, terminate it by hand" >> "$4"
     ' _ "$((MAX_MINUTES*60))" "$id" "$BASE" "$LEDGER.log" >/dev/null 2>&1 &
     pid=$!
 
