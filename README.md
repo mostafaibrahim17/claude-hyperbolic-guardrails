@@ -7,10 +7,10 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. It le
 | Path | What it is |
 |---|---|
 | `server/index.ts` | Hyperbolic's official MCP server, patched to the live v2 API. Drop it over `src/index.ts` in [hyperbolic-mcp](https://github.com/HyperbolicLabs/hyperbolic-mcp) and build. |
-| `guard.sh` | PreToolUse hook. Blocks `rent-gpu-instance` when the estimated cost would pass your session cap or your balance. |
+| `guard.sh` | PreToolUse hook. Prices the requested option from Hyperbolic's live catalogue and blocks `rent-gpu-instance` when the cost would pass your daily cap, when too many rentals are already live, or when your balance cannot cover it. Any error blocks. |
 | `autoterminate.sh` | PostToolUse hook. Starts a timer after a rent that terminates the rental when the window runs out, and cancels it if you terminate by hand. |
 | `config/claude-code-settings.json` | Permission rules (ask before rent and terminate) and the hook wiring for `~/.claude/settings.json`. |
-| `config/claude_desktop_config.json` | Server entry for Claude Desktop. Desktop has no hooks, so only the approval dialog applies there. |
+| `config/claude_desktop_config.json` | Server entry for the Claude Desktop chat app, which does not run Claude Code hooks. Only its approval dialog applies there. |
 | `transcript/run-2026-09-10.md` | The real run: list, rent, nvidia-smi, a blocked over-cap request, manual terminate, and an automatic terminate. |
 
 ## Why the server is patched
@@ -37,7 +37,7 @@ The official server was last updated in May 2025 and calls a v1 marketplace API 
 5. Copy `guard.sh` and `autoterminate.sh` to `~/hyperbolic-guardrails/` and `chmod +x` them. Merge `config/claude-code-settings.json` into `~/.claude/settings.json`, fixing the hook paths.
 6. Export the variables in the shell you start Claude from, then run `claude`:
    ```bash
-   export HYPERBOLIC_API_TOKEN=your-key HYPERBOLIC_BUDGET_USD=10 HYPERBOLIC_MAX_MINUTES=30
+   export HYPERBOLIC_API_TOKEN=your-key HYPERBOLIC_BUDGET_USD=10 HYPERBOLIC_MAX_MINUTES=30 HYPERBOLIC_MAX_LIVE=1
    ```
 
 `jq` and `curl` are required. Node 18 or newer for the server.
@@ -47,14 +47,14 @@ The official server was last updated in May 2025 and calls a v1 marketplace API 
 | Variable | Default | Meaning |
 |---|---|---|
 | `HYPERBOLIC_BUDGET_USD` | 10 | Daily cap (UTC day). Sum of today's estimated costs in the ledger may not pass it. |
-| `HYPERBOLIC_MAX_RATE_USD` | 5.00 | Worst-case price per GPU hour used for estimates. Set it above the priciest card you might rent. |
+| `HYPERBOLIC_MAX_LIVE` | 1 | How many rentals may be live at once. A rent is blocked when this many are already Pending or Running. |
 | `HYPERBOLIC_MAX_MINUTES` | 30 | Auto-terminate window. Also the length used for estimates. |
 | `HYPERBOLIC_LEDGER` | `~/hyperbolic-guardrails/ledger.jsonl` | Where rentals and timer PIDs are recorded. |
 
 ## Limits
 
-- Everything runs on your machine. Anything that can edit `settings.json` can remove the hooks.
-- The timer is a sleeping process. It does not survive a reboot or a closed laptop. It starts when the order is accepted, so the window includes boot time.
+- Everything runs on your machine. The agent's shell inherits your API key, so the hooks gate the tool, not the credential. Anything that can edit `settings.json` can remove the hooks. Hyperbolic allows no overdraft, so your account balance is the one ceiling nothing here can bypass.
+- The timer is a sleeping process. It pauses while the laptop sleeps and dies on logout or reboot. It starts when the order is accepted, so the window includes boot time. It is a hard stop and saves nothing first.
 - The budget hook fails closed: if the balance check errors, the rent is blocked.
 - The ledger has no lock, so two rents placed at the same moment can both pass the cap.
 - On-Demand virtual machines only. Reserved clusters and bare metal are not covered.

@@ -5,9 +5,10 @@
 set -uo pipefail
 
 MAX_MINUTES="${HYPERBOLIC_MAX_MINUTES:-30}"
-MAX_RATE_USD="${HYPERBOLIC_MAX_RATE_USD:-5.00}"
 LEDGER="${HYPERBOLIC_LEDGER:-$HOME/hyperbolic-guardrails/ledger.jsonl}"
 BASE="https://api.hyperbolic.xyz/v2/on-demand/virtual-machine-rentals"
+[[ -n "${HYPERBOLIC_API_TOKEN:-}" ]] || { echo "AUTO-TERMINATE NOT ARMED: HYPERBOLIC_API_TOKEN is not set" >&2; exit 2; }
+[[ "$MAX_MINUTES" =~ ^[0-9]+$ ]] || { echo "AUTO-TERMINATE NOT ARMED: HYPERBOLIC_MAX_MINUTES must be an integer" >&2; exit 2; }
 
 input=$(cat)
 tool=$(jq -r '.tool_name' <<<"$input")
@@ -28,8 +29,11 @@ case "$tool" in
     fi
     # Loud failure: exit 2 makes Claude Code show this to the model and the user.
     [[ -n "$id" ]] || { echo "AUTO-TERMINATE NOT ARMED: no rental id in response and no live rental found. Check list-user-instances and terminate by hand." >&2; exit 2; }
-    gpus=$(jq -r '.tool_input.gpu_count // 1' <<<"$input")
-    est=$(awk -v r="$MAX_RATE_USD" -v g="$gpus" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", r*g*m/60}')
+    # Estimated cost for the ledger: real hourly price of this rental, from the API.
+    cents=$(curl -sf --max-time 10 -H "Authorization: Bearer $HYPERBOLIC_API_TOKEN" "$BASE" \
+      | jq -r --argjson id "$id" '.[] | select(.id==$id) | .currentTerm.costPerHourCents // empty')
+    [[ "$cents" =~ ^[0-9]+$ ]] || cents=500   # unknown price: assume $5/hr, on the high side
+    est=$(awk -v c="$cents" -v m="$MAX_MINUTES" 'BEGIN{printf "%.2f", c/100*m/60}')
 
     # The timer reads HYPERBOLIC_API_TOKEN from its own environment ($1..$4 are not secrets).
     export HYPERBOLIC_API_TOKEN
