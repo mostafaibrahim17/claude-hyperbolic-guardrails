@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 215" role="img" aria-label="A rent call from Claude passes through guard.sh, then a permission prompt, then hyperbolic-mcp, then the Hyperbolic API. If guard.sh finds the request over the cap it exits 2 and the request goes back to the agent blocked. Read-only calls skip both gates and go straight to hyperbolic-mcp.">
+<defs><marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker>
+<marker id="arrBred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker></defs>
+<g fill="none" stroke="#1a1a1a" stroke-width="1.2">
+<polyline points="75,70 75,32 580,32 580,69" stroke-dasharray="5 4" marker-end="url(#arrB)"/>
+<rect x="20" y="70" width="110" height="50" rx="4"/>
+<rect x="180" y="70" width="120" height="50" rx="4"/>
+<rect x="360" y="70" width="110" height="50" rx="4"/>
+<rect x="530" y="70" width="100" height="50" rx="4"/>
+<rect x="670" y="70" width="80" height="50" rx="4"/>
+<line x1="130" y1="95" x2="180" y2="95" marker-end="url(#arrB)"/>
+<line x1="300" y1="95" x2="360" y2="95" marker-end="url(#arrB)"/>
+<line x1="470" y1="95" x2="530" y2="95" marker-end="url(#arrB)"/>
+<line x1="630" y1="95" x2="670" y2="95" marker-end="url(#arrB)"/>
+</g>
+<polyline points="240,120 240,170 75,170 75,121" fill="none" stroke="#c0392b" stroke-width="1.4" marker-end="url(#arrBred)"/>
+<g fill="#1a1a1a" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" text-anchor="middle">
+<text x="330" y="22" font-size="11">read-only calls (list, details, instances): no gate</text>
+<text x="75" y="99">Claude (agent)</text>
+<text x="240" y="92">guard.sh</text>
+<text x="240" y="107" font-size="11">budget check</text>
+<text x="415" y="92">permission prompt</text>
+<text x="415" y="107" font-size="11">you approve</text>
+<text x="580" y="99">hyperbolic-mcp</text>
+<text x="710" y="92">Hyperbolic</text>
+<text x="710" y="107">API</text>
+<text x="155" y="86" font-size="11">rent</text>
+<text x="330" y="86" font-size="11">under cap</text>
+<text x="500" y="86" font-size="11">approved</text>
+<text x="650" y="86" font-size="11">HTTPS</text>
+<text x="160" y="190" font-size="11" fill="#c0392b">over cap: exit 2, request blocked, reason returned to agent</text>
+</g>
+</svg>
