@@ -1,5 +1,12 @@
 # claude-hyperbolic-guardrails
 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Claude Code 2.1.261](https://img.shields.io/badge/Claude%20Code-2.1.261-8A2BE2)
+![Hyperbolic API v2](https://img.shields.io/badge/Hyperbolic%20API-v2-0a58ca)
+![Bash](https://img.shields.io/badge/shell-bash-4EAA25)
+![Tested on macOS 14](https://img.shields.io/badge/tested-macOS%2014-lightgrey)
+![Total GPU spend $1.25](https://img.shields.io/badge/GPU%20spend%20to%20verify-%241.25-success)
+
 **Let Claude Code rent, test and terminate a Hyperbolic GPU from chat, with a budget cap, an approval gate, and an auto-terminate timer in front of every call that spends money.**
 
 Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. Everything here was run for real: five rentals over two days, 26 minutes of H100, about $1.25, with every guardrail exercised at least once. The transcripts are in `transcript/`.
