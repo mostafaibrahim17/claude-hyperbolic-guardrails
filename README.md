@@ -11,7 +11,7 @@
 
 Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. Everything here was run for real: five rentals over two days, 26 minutes of H100, about $1.25, with every guardrail exercised at least once. The transcripts are in `transcript/`.
 
-<p align="center"><img src="assets/flow.svg" alt="A rent call passes through guard.sh, then a permission prompt, then the MCP server, then Hyperbolic. Over the cap, the hook exits 2 and the request is blocked before any prompt." width="760"></p>
+<p align="center"><img src="assets/flow.png" alt="A rent call passes through guard.sh, then a permission prompt, then the MCP server, then Hyperbolic. Over the cap, the hook exits 2 and the request is blocked before any prompt." width="760"></p>
 
 ## What you get
 
