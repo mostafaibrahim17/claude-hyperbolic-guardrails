@@ -1,8 +1,15 @@
 diff --git a/src/index.ts b/src/index.ts
-index a9efb7f..2045a10 100644
+index a9efb7f..ccfa31f 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -8,13 +8,15 @@ import { wait } from "./utils.js";
+@@ -1,3 +1,6 @@
++// Derived from HyperbolicLabs/hyperbolic-mcp (MIT), upstream commit d2962d3.
++// Copyright (c) 2025 Hyperbolic Labs. Modifications (v2 API routes, get-account-balance,
++// non-blocking rent) copyright (c) 2026 the claude-hyperbolic-guardrails contributors, MIT.
+ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+ import { z } from "zod";
+@@ -8,13 +11,15 @@ import { wait } from "./utils.js";
  // Load environment variables
  dotenv.config();
  
@@ -21,7 +28,7 @@ index a9efb7f..2045a10 100644
  });
  
  // Utility function to make authenticated API requests to Hyperbolic
-@@ -60,526 +62,308 @@ async function makeHyperbolicRequest(
+@@ -60,526 +65,308 @@ async function makeHyperbolicRequest(
    }
  }
  
@@ -764,7 +771,7 @@ index a9efb7f..2045a10 100644
      }
    }
  );
-@@ -812,91 +596,24 @@ server.tool("ssh-disconnect", {}, async () => {
+@@ -812,91 +599,24 @@ server.tool("ssh-disconnect", {}, async () => {
    }
  });
  

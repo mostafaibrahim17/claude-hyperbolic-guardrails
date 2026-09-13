@@ -3,15 +3,13 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Claude Code 2.1.261](https://img.shields.io/badge/Claude%20Code-2.1.261-8A2BE2)
 ![Hyperbolic API v2](https://img.shields.io/badge/Hyperbolic%20API-v2-0a58ca)
-![Bash](https://img.shields.io/badge/shell-bash-4EAA25)
-![Tested on macOS 14](https://img.shields.io/badge/tested-macOS%2014-lightgrey)
 ![Total GPU spend $1.25](https://img.shields.io/badge/GPU%20spend%20to%20verify-%241.25-success)
 
 **Let Claude Code rent, test and terminate a Hyperbolic GPU from chat, with a budget cap, an approval gate, and an auto-terminate timer in front of every call that spends money.**
 
-Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. Everything here was run for real: five rentals over two days, 26 minutes of H100, about $1.25, with every guardrail exercised at least once. The transcripts are in `transcript/`.
+Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. Everything here was run for real: five rentals over two days, 26 minutes of H100, about $1.25. Every guardrail except the balance ceiling fired at least once; the balance never got low enough to test it. The transcripts are in `transcript/`.
 
-<p align="center"><img src="assets/flow.png" alt="A rent call passes through guard.sh, then a permission prompt, then the MCP server, then Hyperbolic. Over the cap, the hook exits 2 and the request is blocked before any prompt." width="760"></p>
+<p align="center"><img src="assets/flow.png" alt="The rent path: a rent call passes through guard.sh, then a permission prompt, then the MCP server, then Hyperbolic. Over the cap, the hook exits 2 and the request is blocked before any prompt." width="760"><br><sub>The rent path. The timer and the reaper act after this, on the rental it creates.</sub></p>
 
 ## What you get
 
@@ -19,14 +17,16 @@ Companion repo for the tutorial *From Chat Prompt to Terminated Instance*. Every
 |---|---|
 | **A working server** | Hyperbolic's open-source MCP server, updated from the retired v1 routes to the live v2 API. `server/index.ts` is the file, `server/hyperbolic-mcp-v2.patch` is the diff. |
 | **Guardrail 1, budget** | `guard.sh` prices the exact option from the live catalogue and blocks a rent that would pass your daily cap, your balance, or your live-rental limit. Any error blocks. |
-| **Guardrail 2, approval** | `config/claude-code-settings.json` makes rent, terminate, ssh-connect and remote-shell ask you every time, even in auto-accept mode, and denies direct API calls from the shell. |
-| **Guardrail 3, timer** | `autoterminate.sh` arms a timer on every rent and terminates the rental when the window runs out. Judged by HTTP status, retried, and it notifies you if it fails. |
-| **Backstop** | `reaper.sh` runs from cron and terminates any guard-created rental older than the window, for the day the timer dies with your laptop. |
+| **Guardrail 2, approval** | `config/claude-code-settings.json` makes rent, terminate, ssh-connect and remote-shell ask you every time, even in auto-accept mode, and denies the obvious `curl` and `wget` routes to the API from the shell. |
+| **Guardrail 3, timer** | `autoterminate.sh` arms a timer on every rent and terminates the rental when the window runs out. Judged by HTTP status, retried, and it raises a desktop notification if it fails (macOS or a Linux desktop; headless, look in `ledger.jsonl.log`). |
+| **Backstop** | `reaper.sh` runs from cron and terminates any rental recorded in the ledger that is older than the window, for the case where the timer process dies while the machine stays up. |
 | **Benchmark** | `bench/bench.py`, a one-minute bf16 matmul and bandwidth test that prints its own cost. |
 
 ## Quick start
 
 Requirements: Node 18+, `jq` 1.6+, `curl`, Claude Code. Tested on macOS 14 with Claude Code 2.1.261.
+
+Before you start: the hooks are a Claude Code feature. `config/claude_desktop_config.json` gives the Claude Desktop chat app the server with no budget cap and no timer. The API key is set in two places on purpose: the MCP server reads it from the `claude mcp add` environment, and the hooks read it from the shell you launch Claude Code from.
 
 **1. Hyperbolic account.** Sign up at [app.hyperbolic.ai](https://app.hyperbolic.ai), add the $5 minimum, create an API key, and paste an SSH public key. The server cannot use a passphrase, so make a separate key:
 
@@ -59,7 +59,13 @@ mkdir -p ~/hyperbolic-guardrails
 cp claude-hyperbolic-guardrails/*.sh ~/hyperbolic-guardrails/ && chmod +x ~/hyperbolic-guardrails/*.sh
 ```
 
-Merge `config/claude-code-settings.json` into `~/.claude/settings.json`.
+Merge `config/claude-code-settings.json` into `~/.claude/settings.json`. It is a merge, not a copy: the `permissions` and `hooks` keys have to be combined with anything already there. With `jq`:
+
+```bash
+jq -s '.[0] * .[1]' ~/.claude/settings.json claude-hyperbolic-guardrails/config/claude-code-settings.json > /tmp/settings.json && mv /tmp/settings.json ~/.claude/settings.json
+```
+
+Restart Claude Code if it is already running.
 
 **5. Run.** Export the settings in the shell you start Claude from, then start it.
 
@@ -68,30 +74,40 @@ export HYPERBOLIC_API_TOKEN=your-key HYPERBOLIC_BUDGET_USD=10 HYPERBOLIC_MAX_MIN
 claude
 ```
 
-**6. Prove it works before trusting it.** Ask for a rent that exceeds the cap and confirm you see `BLOCKED`. If the hook cannot run at all, a wrong path or a missing `chmod +x`, Claude Code treats that as a hook error and lets the call through.
+**6. Prove it works before trusting it.** Start a session with a cap too small for any rent and ask for one. The guard blocks before any API call, so this costs nothing:
+
+```bash
+HYPERBOLIC_BUDGET_USD=0.01 claude
+# > rent the cheapest single H100
+# ⎿ BLOCKED: renting 1x h100 ... Today's total would be $1.38, cap is $0.01.
+```
+
+If you see a permission prompt instead of `BLOCKED`, the hook did not run. A wrong path or a missing `chmod +x` makes Claude Code treat it as a hook error and let the call through.
 
 ## Settings
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `HYPERBOLIC_API_TOKEN` | none | Your Hyperbolic API key. Needed by the hooks and the reaper. |
 | `HYPERBOLIC_BUDGET_USD` | 10 | Daily cap, UTC day. The sum of today's estimates in the ledger may not pass it. Terminating early does not credit an estimate back. |
-| `HYPERBOLIC_MAX_MINUTES` | 30 | Auto-terminate window, counted from the order, so it includes boot time. Also the length used for estimates. |
+| `HYPERBOLIC_MAX_MINUTES` | 30 | Auto-terminate window. The timer counts it from the order, so it includes boot time; the reaper counts it from the moment the machine is Running. Also the length used for estimates. |
 | `HYPERBOLIC_MAX_LIVE` | 1 | How many rentals may be live at once. |
-| `HYPERBOLIC_LEDGER` | `~/hyperbolic-guardrails/ledger.jsonl` | Where rentals, estimates and timer PIDs are recorded. |
+| `HYPERBOLIC_LEDGER` | `~/hyperbolic-guardrails/ledger.jsonl` | Where rentals, estimates and timer PIDs are recorded. Auto-terminate results land in `ledger.jsonl.log`; the last API response in `ledger.jsonl.log.last`. |
+| `REAPER_ALL` | 0 | Set to 1 to make the reaper terminate every rental on the account, not only the ones in the ledger. |
 
 ## Backstop from cron
 
-The timer is a process on your laptop. It pauses when the laptop sleeps and dies on reboot. For anything you cannot watch, run the reaper every five minutes with the token in a file only you can read:
+The timer is a process on your laptop. It pauses when the laptop sleeps and dies on reboot. The reaper covers the case where the timer dies while the machine stays up; a machine that is asleep runs neither. Run it every five minutes with the token in a file only you can read, entered without putting it in shell history:
 
 ```bash
-umask 077; echo sk_live_... > ~/.hyperbolic_token
+umask 077; read -rs t && printf '%s\n' "$t" > ~/.hyperbolic_token
 ```
 
 ```
-*/5 * * * * HYPERBOLIC_API_TOKEN=$(cat ~/.hyperbolic_token) HYPERBOLIC_MAX_MINUTES=30 ~/hyperbolic-guardrails/reaper.sh >> ~/hyperbolic-guardrails/reaper.log 2>&1
+*/5 * * * * HYPERBOLIC_API_TOKEN=$(cat ~/.hyperbolic_token) HYPERBOLIC_MAX_MINUTES=30 HYPERBOLIC_LEDGER=$HOME/hyperbolic-guardrails/ledger.jsonl $HOME/hyperbolic-guardrails/reaper.sh >> $HOME/hyperbolic-guardrails/reaper.log 2>&1
 ```
 
-The reaper only touches rentals whose id is in the ledger. Set `REAPER_ALL=1` to reap every rental on the account.
+The reaper only touches rentals whose id is in the ledger, which `autoterminate.sh` writes. A rent whose hook failed to arm is not in the ledger and the reaper will not see it; set `REAPER_ALL=1` if you want it to cover every rental on the account.
 
 ## What was proven, and how
 
